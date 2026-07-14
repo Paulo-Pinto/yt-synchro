@@ -1,10 +1,9 @@
 """Configuration management for yt-synchro."""
 
 import tomllib
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from dataclasses import dataclass, field, asdict
 from typing import Optional
-
 
 CONFIG_DIR = Path.home() / ".config" / "yt-synchro"
 CONFIG_FILE = CONFIG_DIR / "config.toml"
@@ -47,7 +46,7 @@ class Config:
         with open(path, "w") as f:
             for key, value in asdict(self).items():
                 if value:
-                    f.write(f'{key} = {toml_repr(value)}\n')
+                    f.write(f"{key} = {toml_repr(value)}\n")
 
 
 def toml_repr(value) -> str:

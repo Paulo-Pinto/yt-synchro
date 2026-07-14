@@ -1,24 +1,23 @@
 """CLI entry point for yt-synchro."""
 
+import logging
 import sys
 import time
-import logging
 from pathlib import Path
-from typing import Optional
 
 import click
+from rich import print as rprint
 from rich.console import Console
-from rich.table import Table
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
+from rich.table import Table
 from rich.text import Text
-from rich import print as rprint
 
-from .config import load_config, ensure_config, CONFIG_FILE, Config
-from .state import StateManager
-from .downloader import download_playlist, ensure_ytdlp, get_playlist_videos
-from .cleanup import cleanup_old_videos, cleanup_by_storage, cleanup_by_count
+from .cleanup import cleanup_by_count, cleanup_by_storage, cleanup_old_videos
+from .config import CONFIG_FILE, Config, ensure_config, load_config
+from .downloader import download_playlist, ensure_ytdlp
 from .logger import setup_logging
+from .state import StateManager
 
 console = Console(markup=True)
 logger = logging.getLogger(__name__)
@@ -45,11 +44,15 @@ def main(ctx, verbose):
 @click.pass_context
 def run(ctx, playlist, max_storage, max_videos, parallel, quality, output_dir):
     """Download until one of the max limits is reached, then exit."""
-    overrides = _build_overrides(playlist, max_storage, max_videos, parallel, quality, output_dir)
+    overrides = _build_overrides(
+        playlist, max_storage, max_videos, parallel, quality, output_dir
+    )
     config = load_config(overrides)
 
     if not config.playlist_url:
-        console.print("[red]Error: No playlist URL specified. Use --playlist or set in config.[/red]")
+        console.print(
+            "[red]Error: No playlist URL specified. Use --playlist or set in config.[/red]"
+        )
         sys.exit(1)
 
     state = StateManager()
@@ -59,7 +62,9 @@ def run(ctx, playlist, max_storage, max_videos, parallel, quality, output_dir):
     console.print(f"[bold magenta]yt-synchro[/bold magenta] - Downloading playlist...")
     console.print(f"  Playlist: {config.playlist_url}")
     console.print(f"  Output: {config.output_dir}")
-    console.print(f"  Limits: {config.max_storage_gb}GB / {config.max_videos} videos / {config.parallel} parallel")
+    console.print(
+        f"  Limits: {config.max_storage_gb}GB / {config.max_videos} videos / {config.parallel} parallel"
+    )
     console.print()
 
     cleanup_old_videos(state, config)
@@ -75,17 +80,23 @@ def run(ctx, playlist, max_storage, max_videos, parallel, quality, output_dir):
         size_gb = size_bytes / (1024 * 1024 * 1024)
 
         if count >= config.max_videos:
-            console.print(f"\n[red]Limit reached: {count} videos (max {config.max_videos})[/red]")
+            console.print(
+                f"\n[red]Limit reached: {count} videos (max {config.max_videos})[/red]"
+            )
             break
 
         if size_gb >= config.max_storage_gb:
-            console.print(f"\n[red]Limit reached: {size_gb:.2f}GB (max {config.max_storage_gb}GB)[/red]")
+            console.print(
+                f"\n[red]Limit reached: {size_gb:.2f}GB (max {config.max_storage_gb}GB)[/red]"
+            )
             break
 
         available_slots = config.max_videos - count
-        available_storage_gb = config.max_storage_gb - size_gb
+        # available_storage_gb = config.max_storage_gb - size_gb
 
-        console.print(f"\n[magenta]--- Batch: {count}/{config.max_videos} videos, {size_gb:.2f}/{config.max_storage_gb}GB ---[/magenta]")
+        console.print(
+            f"\n[magenta]--- Batch: {count}/{config.max_videos} videos, {size_gb:.2f}/{config.max_storage_gb}GB ---[/magenta]"
+        )
 
         result = download_playlist(config, state, max_downloads=available_slots)
 
@@ -97,7 +108,7 @@ def run(ctx, playlist, max_storage, max_videos, parallel, quality, output_dir):
             break
 
     console.print()
-    console.print(f"[bold white]Run complete:[/bold white]")
+    console.print("[bold white]Run complete:[/bold white]")
     console.print(f"  Downloaded: {total_downloaded}")
     console.print(f"  Failed: {total_failed}")
     console.print()
@@ -115,18 +126,24 @@ def run(ctx, playlist, max_storage, max_videos, parallel, quality, output_dir):
 @click.pass_context
 def daemon(ctx, playlist, max_storage, max_videos, parallel, quality, output_dir):
     """Continuous: check playlist periodically, auto-fill."""
-    overrides = _build_overrides(playlist, max_storage, max_videos, parallel, quality, output_dir)
+    overrides = _build_overrides(
+        playlist, max_storage, max_videos, parallel, quality, output_dir
+    )
     config = load_config(overrides)
 
     if not config.playlist_url:
-        console.print("[red]Error: No playlist URL specified. Use --playlist or set in config.[/red]")
+        console.print(
+            "[red]Error: No playlist URL specified. Use --playlist or set in config.[/red]"
+        )
         sys.exit(1)
 
     state = StateManager()
     output_dir_path = Path(config.output_dir)
     output_dir_path.mkdir(parents=True, exist_ok=True)
 
-    console.print(f"[bold magenta]yt-synchro daemon[/bold magenta] - Starting continuous sync...")
+    console.print(
+        "[bold magenta]yt-synchro daemon[/bold magenta] - Starting continuous sync..."
+    )
     console.print(f"  Playlist: {config.playlist_url}")
     console.print(f"  Check interval: {config.daemon_interval_minutes} minutes")
     console.print("  Press Ctrl+C to stop")
@@ -134,28 +151,36 @@ def daemon(ctx, playlist, max_storage, max_videos, parallel, quality, output_dir
 
     try:
         while True:
-            console.print(f"[dim]Checking playlist at {time.strftime('%Y-%m-%d %H:%M:%S')}...[/dim]")
+            console.print(
+                f"[dim]Checking playlist at {time.strftime('%Y-%m-%d %H:%M:%S')}...[/dim]"
+            )
 
             cleanup_old_videos(state, config)
             cleanup_by_storage(state, config)
             cleanup_by_count(state, config)
 
-            videos = get_playlist_videos(config.playlist_url)
+            # videos = get_playlist_videos(config.playlist_url)
             available_slots = config.max_videos - state.get_count()
-            available_storage = (config.max_storage_gb * 1024 * 1024 * 1024) - state.get_total_size()
+            available_storage = (
+                config.max_storage_gb * 1024 * 1024 * 1024
+            ) - state.get_total_size()
 
             if available_slots > 0 and available_storage > 0:
                 max_downloads = min(available_slots, config.parallel)
                 result = download_playlist(config, state, max_downloads)
 
                 if result["downloaded"] > 0:
-                    console.print(f"[white]Downloaded {result['downloaded']} new videos[/white]")
+                    console.print(
+                        f"[white]Downloaded {result['downloaded']} new videos[/white]"
+                    )
                 if result["failed"] > 0:
                     console.print(f"[red]Failed: {result['failed']}[/red]")
 
             _print_status(state, config)
 
-            console.print(f"[dim]Next check in {config.daemon_interval_minutes} minutes...[/dim]")
+            console.print(
+                f"[dim]Next check in {config.daemon_interval_minutes} minutes...[/dim]"
+            )
             time.sleep(config.daemon_interval_minutes * 60)
 
     except KeyboardInterrupt:
@@ -176,19 +201,21 @@ def status(ctx):
 def config_show(ctx):
     """Show current config."""
     config = load_config()
-    console.print(Panel.fit(
-        f"[bold]Current Configuration[/bold]\n\n"
-        f"Playlist URL: {config.playlist_url or '(not set)'}\n"
-        f"Output Dir: {config.output_dir}\n"
-        f"Max Storage: {config.max_storage_gb} GB\n"
-        f"Max Videos: {config.max_videos}\n"
-        f"Parallel: {config.parallel}\n"
-        f"Quality: {config.quality}\n"
-        f"Daemon Interval: {config.daemon_interval_minutes} min\n"
-        f"Video Max Age: {config.video_max_age_days} days\n\n"
-        f"[dim]Config file: {CONFIG_FILE}[/dim]",
-        title="[magenta]Config[/magenta]",
-    ))
+    console.print(
+        Panel.fit(
+            f"[bold]Current Configuration[/bold]\n\n"
+            f"Playlist URL: {config.playlist_url or '(not set)'}\n"
+            f"Output Dir: {config.output_dir}\n"
+            f"Max Storage: {config.max_storage_gb} GB\n"
+            f"Max Videos: {config.max_videos}\n"
+            f"Parallel: {config.parallel}\n"
+            f"Quality: {config.quality}\n"
+            f"Daemon Interval: {config.daemon_interval_minutes} min\n"
+            f"Video Max Age: {config.video_max_age_days} days\n\n"
+            f"[dim]Config file: {CONFIG_FILE}[/dim]",
+            title="[magenta]Config[/magenta]",
+        )
+    )
 
 
 @main.command()
@@ -200,7 +227,12 @@ def config_edit(ctx):
 
     config = load_config()
     console.print()
-    console.print(Panel("[bold magenta]yt-synchro Config Editor[/bold magenta]", subtitle="Press Enter to keep current value"))
+    console.print(
+        Panel(
+            "[bold magenta]yt-synchro Config Editor[/bold magenta]",
+            subtitle="Press Enter to keep current value",
+        )
+    )
     console.print()
 
     fields = [
@@ -210,7 +242,12 @@ def config_edit(ctx):
         ("max_videos", "Max Videos", int, config.max_videos),
         ("parallel", "Parallel Downloads", int, config.parallel),
         ("quality", "Quality (best/1080p/720p/480p)", str, config.quality),
-        ("daemon_interval_minutes", "Daemon Interval (min)", int, config.daemon_interval_minutes),
+        (
+            "daemon_interval_minutes",
+            "Daemon Interval (min)",
+            int,
+            config.daemon_interval_minutes,
+        ),
         ("video_max_age_days", "Video Max Age (days)", int, config.video_max_age_days),
     ]
 
@@ -232,7 +269,7 @@ def config_edit(ctx):
             else:
                 setattr(config, field_name, new_value)
         except (ValueError, TypeError):
-            console.print(f"  [red]Invalid value, keeping current.[/red]")
+            console.print("  [red]Invalid value, keeping current.[/red]")
 
     config.save(CONFIG_FILE)
     console.print()

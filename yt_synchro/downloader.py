@@ -1,10 +1,10 @@
 """YouTube downloader module for yt-synchro."""
 
-import sys
 import logging
 import subprocess
-from pathlib import Path
+import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 from typing import Optional
 
 try:
@@ -12,20 +12,14 @@ try:
 except ImportError:
     yt_dlp = None
 
-from rich.console import Console
-from rich.progress import (
-    Progress,
-    SpinnerColumn,
-    TextColumn,
-    BarColumn,
-    TaskProgressColumn,
-    TransferSpeedColumn,
-)
-
 import re
 
-from .state import StateManager, VideoState
+from rich.console import Console
+from rich.progress import (BarColumn, Progress, SpinnerColumn,
+                           TaskProgressColumn, TextColumn, TransferSpeedColumn)
+
 from .config import Config
+from .state import StateManager, VideoState
 
 logger = logging.getLogger(__name__)
 console = Console(markup=True)
@@ -41,6 +35,7 @@ def ensure_ytdlp() -> bool:
     try:
         subprocess.check_call([sys.executable, "-m", "pip", "install", "yt-dlp"])
         import importlib
+
         yt_dlp = importlib.import_module("yt_dlp")
         _yt_dlp_installed = True
         return True
@@ -57,10 +52,16 @@ def _embed_author_metadata(file_path: Path, author: str) -> None:
     try:
         subprocess.run(
             [
-                "ffmpeg", "-y", "-i", str(file_path),
-                "-c", "copy",
-                "-metadata", f"artist={author}",
-                "-metadata", f"author={author}",
+                "ffmpeg",
+                "-y",
+                "-i",
+                str(file_path),
+                "-c",
+                "copy",
+                "-metadata",
+                f"artist={author}",
+                "-metadata",
+                f"author={author}",
                 str(temp_path),
             ],
             check=True,
@@ -145,7 +146,9 @@ def download_video(
             if downloaded_path.exists():
                 downloaded_path.rename(final_path)
 
-            _embed_author_metadata(final_path, uploader or info.get("uploader", "") or info.get("channel", ""))
+            _embed_author_metadata(
+                final_path, uploader or info.get("uploader", "") or info.get("channel", "")
+            )
 
             video_state = VideoState.create(
                 video_id=video_id,
@@ -213,10 +216,7 @@ def download_playlist(
     if not videos:
         return {"downloaded": 0, "failed": 0, "skipped": 0}
 
-    to_download = [
-        v for v in videos
-        if not state.is_downloaded(v["video_id"])
-    ]
+    to_download = [v for v in videos if not state.is_downloaded(v["video_id"])]
 
     if max_downloads:
         to_download = to_download[:max_downloads]
@@ -236,8 +236,13 @@ def download_playlist(
         TransferSpeedColumn(),
         console=console,
     ) as progress:
+
         def download_one(video):
-            label = f"{video.get('uploader', '')} - {video.get('title', '')}" if video.get("uploader") else video.get("title", video["video_id"])
+            label = (
+                f"{video.get('uploader', '')} - {video.get('title', '')}"
+                if video.get("uploader")
+                else video.get("title", video["video_id"])
+            )
             task_id = progress.add_task(label, total=None)
             return download_video(
                 video_id=video["video_id"],

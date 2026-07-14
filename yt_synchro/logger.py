@@ -2,9 +2,8 @@
 
 import logging
 import logging.handlers
-from pathlib import Path
 
-from .config import LOG_FILE, CONFIG_DIR
+from .config import CONFIG_DIR, LOG_FILE
 
 
 def setup_logging(verbose: bool = False) -> logging.Logger:

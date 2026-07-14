@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yt-synchro"
+version = "0.1.0"
+description = "YouTube playlist sync with storage management"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+dependencies = [
+    "yt-dlp>=2024.1.0",
+    "rich>=13.0",
+    "click>=8.1",
+]
+
+[project.scripts]
+yt-synchro = "yt_synchro.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]

@@ -18,5 +18,26 @@ dependencies = [
 [project.scripts]
 yt-synchro = "yt_synchro.cli:main"
 
+[dependency-groups]
+dev = [
+    "pytest>=7.0",
+    "black>=24.0",
+    "isort>=5.13",
+    "flake8>=7.0",
+]
+
 [tool.setuptools.packages.find]
 where = ["."]
+
+[tool.black]
+line-length = 96
+target-version = ['py312']
+
+[tool.isort]
+profile = "black"
+line_length = 96
+skip = [".venv", "build", "dist", ".git"]
+skip_glob = ["*.egg-info", "__pycache__"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

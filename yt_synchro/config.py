@@ -10,16 +10,7 @@ CONFIG_FILE = CONFIG_DIR / "config.toml"
 STATE_FILE = CONFIG_DIR / "state.json"
 LOG_FILE = CONFIG_DIR / "yt-synchro.log"
 
-DEFAULTS = {
-    "playlist_url": "",
-    "output_dir": str(Path.home() / "Downloads" / "yt-synchro"),
-    "max_storage_gb": 50.0,
-    "max_videos": 20,
-    "parallel": 3,
-    "quality": "1080p",
-    "daemon_interval_minutes": 60,
-    "video_max_age_days": 14,
-}
+_VALID_QUALITIES = {"best", "2160p", "1440p", "1080p", "720p", "480p", "360p"}
 
 
 @dataclass
@@ -45,8 +36,24 @@ class Config:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w") as f:
             for key, value in asdict(self).items():
-                if value:
-                    f.write(f"{key} = {toml_repr(value)}\n")
+                f.write(f"{key} = {toml_repr(value)}\n")
+
+    def validate(self) -> None:
+        """Raise ValueError for configuration values that would break the app."""
+        if self.max_storage_gb < 0:
+            raise ValueError(f"max_storage_gb must be >= 0, got {self.max_storage_gb}")
+        if self.max_videos <= 0:
+            raise ValueError(f"max_videos must be > 0, got {self.max_videos}")
+        if self.parallel <= 0:
+            raise ValueError(f"parallel must be > 0, got {self.parallel}")
+        if self.daemon_interval_minutes <= 0:
+            raise ValueError(
+                f"daemon_interval_minutes must be > 0, got {self.daemon_interval_minutes}"
+            )
+        if self.video_max_age_days < 0:
+            raise ValueError(f"video_max_age_days must be >= 0, got {self.video_max_age_days}")
+        if self.quality not in _VALID_QUALITIES:
+            raise ValueError(f"quality must be one of {_VALID_QUALITIES}, got {self.quality!r}")
 
 
 def toml_repr(value) -> str:
@@ -63,6 +70,7 @@ def load_config(overrides: Optional[dict] = None) -> Config:
         for key, value in overrides.items():
             if value is not None and hasattr(config, key):
                 setattr(config, key, value)
+    config.validate()
     return config
 
 

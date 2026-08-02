@@ -7,19 +7,21 @@ Python CLI app that downloads YouTube playlist videos to a local folder, managin
 ## Architecture
 
 ```
-CLI (click) → Downloader (yt-dlp) → File System
-     ↓              ↓                    ↓
-  Config (TOML)  State (JSON)        Logs (Rotating)
+CLI (click) → Runner (orchestration) → Downloader (yt-dlp) → File System
+     ↓              ↓                        ↓                    ↓
+  Config (TOML)  Display (UI)            State (JSON)        Logs (Rotating)
 ```
 
 ### Modules
 
 | Module | Purpose |
 |--------|---------|
-| `cli.py` | Click CLI with run, daemon, status, config, list, remove commands |
+| `cli.py` | Click command definitions and dispatch only |
+| `runner.py` | Run / daemon orchestration loops |
+| `display.py` | Terminal UI helpers (tables, panels, prompts) |
 | `downloader.py` | yt-dlp wrapper with parallel download support |
-| `config.py` | TOML config file management with defaults |
-| `state.py` | JSON state tracking for downloaded videos |
+| `config.py` | TOML config file management with defaults and validation |
+| `state.py` | JSON state tracking with path sandboxing and atomic writes |
 | `cleanup.py` | Age-based and limit-based video deletion |
 | `logger.py` | Rotating file logging (10MB / 30 days) |
 
@@ -36,8 +38,8 @@ yt-synchro daemon --playlist URL [same flags]
 yt-synchro status
 
 # Config
-yt-synchro config show
-yt-synchro config edit
+yt-synchro config-show
+yt-synchro config-edit
 
 # List videos
 yt-synchro list
@@ -69,15 +71,17 @@ video_max_age_days = 14
 
 - **Location:** `~/.config/yt-synchro/state.json`
 - **Tracks:** video ID, title, file path, download date, status
+- **Sandboxing:** `file_path` is validated on load and write; paths outside `output_dir` are rejected
+- **Atomic writes:** state is written to a temp file and renamed into place
 
 ## Logging
 
 - **Location:** `~/.config/yt-synchro/yt-synchro.log`
-- **Rotation:** 10MB or 30 days
+- **Rotation:** 10MB / 5 backups
 
 ## Dependencies
 
-- `yt-dlp` - YouTube downloading
+- `yt-dlp` - YouTube downloading (declared as a normal dependency)
 - `rich` - Pretty terminal output
 - `click` - CLI framework
 - stdlib `tomllib` - Config parsing (Python 3.11+)
@@ -93,17 +97,20 @@ All limits active simultaneously, first-hit-wins:
 ## Behavior
 
 - **Failed downloads:** log error, skip, continue
-- **Missing yt-dlp:** auto-install via pip
-- **Deletion:** eager cleanup every cycle (2+ week old videos)
+- **Missing yt-dlp:** fails fast with a clear error; never installs at runtime
+- **Deletion:** eager cleanup every cycle (videos older than `video_max_age_days`)
 - **Config missing:** auto-create with defaults
 
 ## Development
 
 ```bash
-# Install dependencies
-pip install -e .
+# Install dependencies and dev tools
+uv sync --group dev
+
+# Lint / format
+./scripts/lint.sh
 
 # Run
-yt-synchro --help
-python -m yt_synchro --help
+uv run yt-synchro --help
+uv run python -m yt_synchro --help
 ```

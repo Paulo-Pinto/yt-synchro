@@ -1,47 +1,58 @@
 """YouTube downloader module for yt-synchro."""
 
 import logging
+import re
 import subprocess
-import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
+
+from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+    TransferSpeedColumn,
+)
+
+from .config import Config
+from .state import StateManager, VideoState
 
 try:
     import yt_dlp
 except ImportError:
     yt_dlp = None
 
-import re
-
-from rich.console import Console
-from rich.progress import (BarColumn, Progress, SpinnerColumn,
-                           TaskProgressColumn, TextColumn, TransferSpeedColumn)
-
-from .config import Config
-from .state import StateManager, VideoState
-
 logger = logging.getLogger(__name__)
 console = Console(markup=True)
 
 
-_yt_dlp_installed = yt_dlp is not None
+_YOUTUBE_NETLOCS = {"youtube.com", "www.youtube.com", "youtu.be", "youtube-nocookie.com"}
 
 
-def ensure_ytdlp() -> bool:
-    global _yt_dlp_installed, yt_dlp
-    if _yt_dlp_installed:
-        return True
-    try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "yt-dlp"])
-        import importlib
+def _require_ytdlp() -> None:
+    if yt_dlp is None:
+        raise RuntimeError("yt-dlp is not installed. Install it with: pip install yt-dlp")
 
-        yt_dlp = importlib.import_module("yt_dlp")
-        _yt_dlp_installed = True
-        return True
-    except Exception as e:
-        logger.error(f"Failed to install yt-dlp: {e}")
-        return False
+
+def _validate_playlist_url(url: str) -> None:
+    parsed = urlparse(url)
+    if parsed.scheme != "https":
+        raise ValueError(f"Playlist URL must use HTTPS, got {parsed.scheme!r}")
+    netloc = parsed.netloc.lower().lstrip("www.")
+    if netloc not in _YOUTUBE_NETLOCS and not netloc.endswith(".youtube.com"):
+        raise ValueError(f"Playlist URL must point to YouTube, got {url!r}")
+
+
+def _sandbox_path(path: Path, base_dir: Path) -> Path:
+    resolved = path.expanduser().resolve()
+    base_resolved = base_dir.expanduser().resolve()
+    if not resolved.is_relative_to(base_resolved):
+        raise ValueError(f"Path escapes output directory: {resolved}")
+    return resolved
 
 
 def _embed_author_metadata(file_path: Path, author: str) -> None:
@@ -68,7 +79,7 @@ def _embed_author_metadata(file_path: Path, author: str) -> None:
             capture_output=True,
         )
         temp_path.replace(file_path)
-    except Exception:
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
         logger.warning(f"Failed to embed metadata into {file_path}")
         if temp_path.exists():
             temp_path.unlink()
@@ -100,16 +111,12 @@ def download_video(
     url: str,
     output_dir: Path,
     quality: str,
-    state: StateManager,
     progress: Optional[Progress] = None,
     task_id: Optional[str] = None,
     uploader: str = "",
     title: str = "",
-) -> Optional[dict]:
-    if state.is_downloaded(video_id):
-        logger.debug(f"Skipping already downloaded: {video_id}")
-        return None
-
+) -> dict:
+    _require_ytdlp()
     short_label = f"{uploader} - {title}" if uploader else title or video_id
 
     def yt_progress_hook(d):
@@ -143,7 +150,17 @@ def download_video(
             downloaded_path = output_dir / f"{video_id}.{ext}"
             safe_name = _sanitize_filename(title)
             final_path = output_dir / f"{safe_name}.{ext}"
+            _sandbox_path(final_path, output_dir)
+
             if downloaded_path.exists():
+                # Avoid overwriting distinct videos that sanitize to the same name.
+                counter = 1
+                original_final_path = final_path
+                while final_path.exists():
+                    final_path = original_final_path.with_suffix(
+                        f".{counter}{original_final_path.suffix}"
+                    )
+                    counter += 1
                 downloaded_path.rename(final_path)
 
             _embed_author_metadata(
@@ -155,7 +172,6 @@ def download_video(
                 title=title,
                 file_path=str(final_path),
             )
-            state.add(video_state)
 
             if progress is not None and task_id is not None:
                 progress.update(task_id, description=f"[white]✓[/white] {short_label}")
@@ -165,20 +181,33 @@ def download_video(
                 "title": title,
                 "status": "downloaded",
                 "file_path": str(final_path),
+                "video_state": video_state,
             }
-    except Exception as e:
+    except yt_dlp.utils.DownloadError as e:
         logger.error(f"Failed to download {video_id}: {e}")
         if progress is not None and task_id is not None:
             progress.update(task_id, description=f"[red]✗[/red] {short_label}")
         return {
             "video_id": video_id,
-            "title": "",
+            "title": title or "",
+            "status": "failed",
+            "error": str(e),
+        }
+    except (OSError, ValueError) as e:
+        logger.error(f"Failed to finalize {video_id}: {e}")
+        if progress is not None and task_id is not None:
+            progress.update(task_id, description=f"[red]✗[/red] {short_label}")
+        return {
+            "video_id": video_id,
+            "title": title or "",
             "status": "failed",
             "error": str(e),
         }
 
 
 def get_playlist_videos(playlist_url: str) -> list[dict]:
+    _require_ytdlp()
+    _validate_playlist_url(playlist_url)
     ydl_opts = {
         "quiet": True,
         "no_warnings": True,
@@ -188,7 +217,7 @@ def get_playlist_videos(playlist_url: str) -> list[dict]:
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(playlist_url, download=False)
-            entries = info.get("entries", [])
+            entries = info.get("entries", []) if info else []
             return [
                 {
                     "video_id": entry.get("id"),
@@ -197,9 +226,9 @@ def get_playlist_videos(playlist_url: str) -> list[dict]:
                     "uploader": entry.get("uploader", "") or entry.get("channel", ""),
                 }
                 for entry in entries
-                if entry.get("id")
+                if entry and entry.get("id")
             ]
-    except Exception as e:
+    except yt_dlp.utils.DownloadError as e:
         logger.error(f"Failed to fetch playlist: {e}")
         return []
 
@@ -209,6 +238,7 @@ def download_playlist(
     state: StateManager,
     max_downloads: Optional[int] = None,
 ) -> dict:
+    _require_ytdlp()
     output_dir = Path(config.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -249,7 +279,6 @@ def download_playlist(
                 url=video["url"],
                 output_dir=output_dir,
                 quality=config.quality,
-                state=state,
                 progress=progress,
                 task_id=task_id,
                 uploader=video.get("uploader", ""),
@@ -263,6 +292,7 @@ def download_playlist(
                 if result is None:
                     skipped += 1
                 elif result["status"] == "downloaded":
+                    state.add(result["video_state"])
                     downloaded += 1
                 else:
                     failed += 1

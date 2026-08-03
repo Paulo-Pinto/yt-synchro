@@ -28,10 +28,13 @@ class Config:
     @classmethod
     def from_toml(cls, path: Path) -> "Config":
         if not path.exists():
-            return cls()
-        with open(path, "rb") as f:
-            data = tomllib.load(f)
-        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+            config = cls()
+        else:
+            with open(path, "rb") as f:
+                data = tomllib.load(f)
+            config = cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+        config.validate()
+        return config
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

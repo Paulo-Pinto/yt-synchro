@@ -6,14 +6,16 @@ from yt_synchro.config import Config, ensure_config, load_config
 
 
 def test_save_preserves_falsy_values(tmp_path):
+    # Valid falsy values (empty strings and zeros) must round-trip, not be
+    # replaced by defaults. Invalid values are rejected by validate() instead.
     config = Config(
         playlist_url="",
         output_dir=str(tmp_path / "out"),
         max_storage_gb=0.0,
-        max_videos=0,
-        parallel=0,
-        quality="",
-        daemon_interval_minutes=0,
+        max_videos=1,
+        parallel=1,
+        quality="360p",
+        daemon_interval_minutes=1,
         video_max_age_days=0,
     )
     path = tmp_path / "config.toml"
@@ -22,10 +24,10 @@ def test_save_preserves_falsy_values(tmp_path):
     loaded = Config.from_toml(path)
     assert loaded.playlist_url == ""
     assert loaded.max_storage_gb == 0.0
-    assert loaded.max_videos == 0
-    assert loaded.parallel == 0
-    assert loaded.quality == ""
-    assert loaded.daemon_interval_minutes == 0
+    assert loaded.max_videos == 1
+    assert loaded.parallel == 1
+    assert loaded.quality == "360p"
+    assert loaded.daemon_interval_minutes == 1
     assert loaded.video_max_age_days == 0
 
 
@@ -33,7 +35,7 @@ def test_save_escapes_special_characters(tmp_path):
     config = Config(
         playlist_url='https://example.com/playlist?list=PLfoo"bar',
         output_dir=str(tmp_path / "out"),
-        quality='1080p"',
+        quality="1080p",
     )
     path = tmp_path / "config.toml"
     config.save(path)
@@ -41,7 +43,7 @@ def test_save_escapes_special_characters(tmp_path):
     # The saved file must be valid TOML and round-trip the special characters.
     loaded = Config.from_toml(path)
     assert loaded.playlist_url == 'https://example.com/playlist?list=PLfoo"bar'
-    assert loaded.quality == '1080p"'
+    assert loaded.quality == "1080p"
 
 
 def test_validate_rejects_invalid_values():
@@ -70,6 +72,18 @@ def test_validate_rejects_invalid_values():
 def test_validate_accepts_positive_values():
     config = Config()
     config.validate()  # defaults are valid
+
+
+def test_from_toml_validates_invalid_config(tmp_path):
+    config = Config(
+        output_dir=str(tmp_path / "out"),
+        max_videos=0,
+    )
+    path = tmp_path / "config.toml"
+    config.save(path)
+
+    with pytest.raises(ValueError):
+        Config.from_toml(path)
 
 
 def test_load_config_validates_by_default(monkeypatch, tmp_path):

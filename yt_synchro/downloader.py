@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 console = Console(markup=True)
 
 
-_YOUTUBE_NETLOCS = {"youtube.com", "www.youtube.com", "youtu.be", "youtube-nocookie.com"}
+_YOUTUBE_HOSTS = {"youtube.com", "youtu.be", "youtube-nocookie.com"}
 
 
 def _require_ytdlp() -> None:
@@ -42,8 +42,13 @@ def _validate_playlist_url(url: str) -> None:
     parsed = urlparse(url)
     if parsed.scheme != "https":
         raise ValueError(f"Playlist URL must use HTTPS, got {parsed.scheme!r}")
-    netloc = parsed.netloc.lower().lstrip("www.")
-    if netloc not in _YOUTUBE_NETLOCS and not netloc.endswith(".youtube.com"):
+    # Use hostname (not netloc) so ports/userinfo are ignored, and strip the
+    # literal "www." prefix. str.lstrip("www.") would strip *characters*,
+    # allowing attacker-controlled lookalike domains such as "wwyoutube.com".
+    host = (parsed.hostname or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    if host not in _YOUTUBE_HOSTS and not host.endswith(".youtube.com"):
         raise ValueError(f"Playlist URL must point to YouTube, got {url!r}")
 
 

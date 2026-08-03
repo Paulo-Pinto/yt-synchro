@@ -30,6 +30,19 @@ def test_get_playlist_videos_rejects_non_youtube_url():
         get_playlist_videos("file:///etc/passwd")
 
 
+def test_get_playlist_videos_rejects_lookalike_domains():
+    # These domains are attacker-registerable; the old lstrip("www.") validator
+    # incorrectly accepted them as YouTube.
+    for malicious in (
+        "https://wwyoutube.com/playlist?list=PLfoo",
+        "https://wwwyoutube.com/playlist?list=PLfoo",
+        "https://wwwyoutu.be/playlist?list=PLfoo",
+        "https://youtube.com.evil.com/playlist?list=PLfoo",
+    ):
+        with pytest.raises(ValueError):
+            get_playlist_videos(malicious)
+
+
 def test_get_playlist_videos_accepts_youtube_url():
     with patch.object(downloader_module, "yt_dlp") as mock_ytdlp:
         mock_ydl = MagicMock()

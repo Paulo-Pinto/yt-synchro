@@ -8,13 +8,13 @@ import pytest
 import yt_synchro.downloader as downloader_module
 from yt_synchro.config import Config
 from yt_synchro.downloader import download_video, get_playlist_videos
-from yt_synchro.state import StateManager
+from yt_synchro.state import StateManager, VideoState
 
 
 def make_state(tmp_path):
     state_file = tmp_path / "state.json"
     output_dir = tmp_path / "out"
-    output_dir.mkdir()
+    output_dir.mkdir(exist_ok=True)
     return StateManager(state_file=state_file, output_dir=output_dir)
 
 
@@ -38,9 +38,7 @@ def test_get_playlist_videos_accepts_youtube_url():
                 {"id": "abc123def45", "title": "t", "uploader": "u"},
             ]
         }
-        mock_ytdlp.YoutubeDL.return_value.__enter__ = lambda self: self
-        mock_ytdlp.YoutubeDL.return_value.__exit__ = lambda *args: None
-        mock_ytdlp.YoutubeDL.return_value = mock_ydl
+        mock_ytdlp.YoutubeDL.return_value.__enter__.return_value = mock_ydl
 
         result = get_playlist_videos("https://www.youtube.com/playlist?list=PLfoo")
         assert len(result) == 1
@@ -57,23 +55,21 @@ def test_download_video_sandboxes_malicious_id(tmp_path):
             "title": "safe title",
             "ext": "mp4",
         }
-        mock_ytdlp.YoutubeDL.return_value.__enter__ = lambda self: self
-        mock_ytdlp.YoutubeDL.return_value.__exit__ = lambda *args: None
-        mock_ytdlp.YoutubeDL.return_value = mock_ydl
+        mock_ytdlp.YoutubeDL.return_value.__enter__.return_value = mock_ydl
 
-        # The video_id looks like path traversal; result must stay inside output_dir.
-        download_video(
+        # The video_id looks like path traversal; the download must not
+        # produce a tracked file that escapes output_dir.
+        result = download_video(
             video_id="../etc/passwd",
             url="https://www.youtube.com/watch?v=abc123def45",
             output_dir=output_dir,
             quality="1080p",
-            state=state,
         )
 
-        saved = state.get("../etc/passwd")
-        assert saved is not None
-        resolved = Path(saved.file_path).resolve()
-        assert resolved.is_relative_to(output_dir.resolve())
+        # Whether it failed-fast or produced a path, nothing may escape the sandbox.
+        if result["status"] == "downloaded":
+            resolved = Path(result["file_path"]).resolve()
+            assert resolved.is_relative_to(output_dir.resolve())
 
 
 def test_download_video_catches_ytdlp_error(tmp_path):
@@ -91,7 +87,6 @@ def test_download_video_catches_ytdlp_error(tmp_path):
             url="https://www.youtube.com/watch?v=abc123def45",
             output_dir=output_dir,
             quality="1080p",
-            state=state,
         )
 
         assert result["status"] == "failed"
@@ -114,12 +109,22 @@ def test_download_playlist_batches_state_updates(tmp_path):
             {"video_id": "v1", "url": "u1", "title": "t1", "uploader": ""},
             {"video_id": "v2", "url": "u2", "title": "t2", "uploader": ""},
         ]
-        mock_download.return_value = {
-            "video_id": "v1",
-            "title": "t1",
-            "status": "downloaded",
-            "file_path": str(output_dir / "t1.mp4"),
-        }
+
+        def fake_download(video_id, url, **kwargs):
+            file_path = str(output_dir / f"{video_id}.mp4")
+            return {
+                "video_id": video_id,
+                "title": video_id,
+                "status": "downloaded",
+                "file_path": file_path,
+                "video_state": VideoState.create(
+                    video_id=video_id, title=video_id, file_path=file_path
+                ),
+            }
+
+        mock_download.side_effect = fake_download
 
         result = downloader_module.download_playlist(config, state, max_downloads=2)
         assert result["downloaded"] == 2
+        assert state.get("v1") is not None
+        assert state.get("v2") is not None

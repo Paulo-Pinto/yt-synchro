@@ -145,11 +145,19 @@ class StateManager:
         return min(downloaded, key=lambda v: datetime.fromisoformat(v.downloaded_at))
 
     def remove_video(self, video: VideoState) -> bool:
-        """Sandbox, unlink, mark removed, and persist state."""
+        """Sandbox, unlink, mark removed, and persist state.
+
+        If the path escapes the output directory, the file is never touched.
+        The entry is still marked removed so cleanup does not loop forever.
+        """
         try:
             self._sandbox(video.file_path)
         except ValueError as exc:
             logger.warning(f"Skipping deletion of escaped path: {exc}")
+            video.status = "removed"
+            with self._lock:
+                self._videos[video.video_id] = video
+                self._save()
             return False
         path = Path(video.file_path)
         if path.exists():

@@ -3,6 +3,8 @@
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
 from yt_synchro.cleanup import cleanup_by_count, cleanup_by_storage
 from yt_synchro.config import Config
 from yt_synchro.state import StateManager, VideoState
@@ -11,7 +13,7 @@ from yt_synchro.state import StateManager, VideoState
 def make_state(tmp_path):
     state_file = tmp_path / "state.json"
     output_dir = tmp_path / "out"
-    output_dir.mkdir()
+    output_dir.mkdir(exist_ok=True)
     return StateManager(state_file=state_file, output_dir=output_dir)
 
 
@@ -28,7 +30,8 @@ def test_cleanup_by_storage_persists_state(tmp_path):
     output_dir = Path(state._output_dir)
     config = Config(max_storage_gb=0.000001, output_dir=str(output_dir))
 
-    add_video(state, output_dir, "old", size_bytes=1024, age_days=2)
+    # 0.000001 GB is 1048 bytes; 2048 bytes deterministically exceeds the limit.
+    add_video(state, output_dir, "old", size_bytes=2048, age_days=2)
 
     cleanup_by_storage(state, config)
 
@@ -61,11 +64,18 @@ def test_cleanup_sandbox_rejects_escape(tmp_path):
     outside = tmp_path / "outside.mp4"
     outside.write_text("precious")
     video = VideoState.create(video_id="evil", title="evil", file_path=str(outside))
-    state.add(video)
 
+    # Adding an escaped path is rejected outright by the sandbox.
+    with pytest.raises(ValueError):
+        state.add(video)
+
+    # Even if a tampered/legacy state file slips an escaped entry in,
+    # cleanup must never delete outside the output directory.
+    state._videos["evil"] = video
     cleanup_by_count(state, config)
 
     assert outside.exists()
+    outside.unlink()
 
 
 def test_cleanup_by_count_deletes_under_output_dir(tmp_path):

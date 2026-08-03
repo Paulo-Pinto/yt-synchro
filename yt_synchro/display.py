@@ -95,6 +95,12 @@ def edit_config(config: Config) -> None:
         except (ValueError, TypeError):
             console.print("  [red]Invalid value, keeping current.[/red]")
 
+    try:
+        config.validate()
+    except ValueError as exc:
+        console.print(f"  [red]Config invalid: {exc}[/red]")
+        return
+
     config.save(CONFIG_FILE)
     console.print()
     console.print("[white]  Config saved![/white]")

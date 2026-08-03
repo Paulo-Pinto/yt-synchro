@@ -29,6 +29,21 @@ def test_save_preserves_falsy_values(tmp_path):
     assert loaded.video_max_age_days == 0
 
 
+def test_save_escapes_special_characters(tmp_path):
+    config = Config(
+        playlist_url='https://example.com/playlist?list=PLfoo"bar',
+        output_dir=str(tmp_path / "out"),
+        quality='1080p"',
+    )
+    path = tmp_path / "config.toml"
+    config.save(path)
+
+    # The saved file must be valid TOML and round-trip the special characters.
+    loaded = Config.from_toml(path)
+    assert loaded.playlist_url == 'https://example.com/playlist?list=PLfoo"bar'
+    assert loaded.quality == '1080p"'
+
+
 def test_validate_rejects_invalid_values():
     config = Config()
 

@@ -1,5 +1,6 @@
 """Configuration management for yt-synchro."""
 
+import json
 import tomllib
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -58,7 +59,8 @@ class Config:
 
 def toml_repr(value) -> str:
     if isinstance(value, str):
-        return f'"{value}"'
+        # JSON string escaping is a valid subset of TOML basic-string escaping.
+        return json.dumps(value)
     if isinstance(value, bool):
         return "true" if value else "false"
     return str(value)

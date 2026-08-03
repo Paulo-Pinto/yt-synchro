@@ -1,6 +1,7 @@
 """CLI entry point for yt-synchro."""
 
 import logging
+import shutil
 import sys
 from pathlib import Path
 
@@ -30,6 +31,11 @@ def main(ctx, verbose):
     ctx.ensure_object(dict)
     ctx.obj["verbose"] = verbose
     setup_logging(verbose)
+    if shutil.which("ffmpeg") is None:
+        logger.warning(
+            "ffmpeg is not installed or not on PATH. "
+            "Author metadata embedding will be skipped."
+        )
 
 
 @main.command()

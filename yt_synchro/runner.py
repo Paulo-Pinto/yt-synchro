@@ -39,6 +39,15 @@ def _ensure_playlist(config: Config) -> None:
         sys.exit(1)
 
 
+def _cleanup_partial_files(output_dir: Path) -> None:
+    """Remove leftover .part files from previous interrupted downloads."""
+    for part_file in output_dir.glob("*.part"):
+        try:
+            part_file.unlink()
+        except OSError:
+            pass
+
+
 def _print_run_header(config: Config) -> None:
     console.print("[bold magenta]yt-synchro[/bold magenta] - Downloading playlist...")
     console.print(f"  Playlist: {config.playlist_url}")
@@ -60,6 +69,7 @@ def do_run(config: Config) -> None:
 
     _print_run_header(config)
 
+    _cleanup_partial_files(output_dir_path)
     cleanup_old_videos(state, config)
     cleanup_by_storage(state, config)
     cleanup_by_count(state, config)
@@ -136,6 +146,7 @@ def do_daemon(config: Config) -> None:
                 f"[dim]Checking playlist at {time.strftime('%Y-%m-%d %H:%M:%S')}...[/dim]"
             )
 
+            _cleanup_partial_files(output_dir_path)
             cleanup_old_videos(state, config)
             cleanup_by_storage(state, config)
             cleanup_by_count(state, config)

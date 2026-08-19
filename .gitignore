@@ -2,3 +2,6 @@ build/
 *egg*
 *pycache*
 *venv*
+.omo
+dist/
+.pytest_cache

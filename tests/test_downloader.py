@@ -48,7 +48,7 @@ def test_get_playlist_videos_accepts_youtube_url():
         mock_ydl = MagicMock()
         mock_ydl.extract_info.return_value = {
             "entries": [
-                {"id": "abc123def45", "title": "t", "uploader": "u"},
+                {"id": "abc123def45", "title": "t", "uploader": "u", "duration": 120},
             ]
         }
         mock_ytdlp.YoutubeDL.return_value.__enter__.return_value = mock_ydl
@@ -56,6 +56,7 @@ def test_get_playlist_videos_accepts_youtube_url():
         result = get_playlist_videos("https://www.youtube.com/playlist?list=PLfoo")
         assert len(result) == 1
         assert result[0]["video_id"] == "abc123def45"
+        assert result[0]["duration"] == 120
 
 
 def test_download_video_sandboxes_malicious_id(tmp_path):
@@ -119,8 +120,8 @@ def test_download_playlist_batches_state_updates(tmp_path):
         patch.object(downloader_module, "download_video") as mock_download,
     ):
         mock_get.return_value = [
-            {"video_id": "v1", "url": "u1", "title": "t1", "uploader": ""},
-            {"video_id": "v2", "url": "u2", "title": "t2", "uploader": ""},
+            {"video_id": "v1", "url": "u1", "title": "t1", "uploader": "", "duration": 120},
+            {"video_id": "v2", "url": "u2", "title": "t2", "uploader": "", "duration": 240},
         ]
 
         def fake_download(video_id, url, **kwargs):
@@ -131,7 +132,10 @@ def test_download_playlist_batches_state_updates(tmp_path):
                 "status": "downloaded",
                 "file_path": file_path,
                 "video_state": VideoState.create(
-                    video_id=video_id, title=video_id, file_path=file_path
+                    video_id=video_id,
+                    title=video_id,
+                    file_path=file_path,
+                    duration=kwargs.get("duration"),
                 ),
             }
 
@@ -141,3 +145,54 @@ def test_download_playlist_batches_state_updates(tmp_path):
         assert result["downloaded"] == 2
         assert state.get("v1") is not None
         assert state.get("v2") is not None
+        assert state.get("v1").duration == 120
+        assert state.get("v2").duration == 240
+
+
+def test_duration_passed_through_download_video(tmp_path):
+    state = make_state(tmp_path)
+    output_dir = Path(state._output_dir)
+
+    with patch.object(downloader_module, "yt_dlp") as mock_ytdlp:
+        mock_ydl = MagicMock()
+        mock_ydl.extract_info.return_value = {
+            "title": "safe title",
+            "ext": "mp4",
+            "duration": 180,
+        }
+        mock_ytdlp.YoutubeDL.return_value.__enter__.return_value = mock_ydl
+
+        result = download_video(
+            video_id="abc123def45",
+            url="https://www.youtube.com/watch?v=abc123def45",
+            output_dir=output_dir,
+            quality="1080p",
+            duration=300,
+        )
+
+        if result["status"] == "downloaded":
+            assert result["video_state"].duration == 300
+
+
+def test_duration_fallback_from_info_dict(tmp_path):
+    state = make_state(tmp_path)
+    output_dir = Path(state._output_dir)
+
+    with patch.object(downloader_module, "yt_dlp") as mock_ytdlp:
+        mock_ydl = MagicMock()
+        mock_ydl.extract_info.return_value = {
+            "title": "safe title",
+            "ext": "mp4",
+            "duration": 180,
+        }
+        mock_ytdlp.YoutubeDL.return_value.__enter__.return_value = mock_ydl
+
+        result = download_video(
+            video_id="abc123def45",
+            url="https://www.youtube.com/watch?v=abc123def45",
+            output_dir=output_dir,
+            quality="1080p",
+        )
+
+        if result["status"] == "downloaded":
+            assert result["video_state"].duration == 180

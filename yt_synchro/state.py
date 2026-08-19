@@ -21,14 +21,22 @@ class VideoState:
     title: str
     file_path: str
     downloaded_at: str  # ISO format
+    duration: Optional[float] = None  # seconds
     status: str = "downloaded"  # downloaded, failed, removed
 
     @classmethod
-    def create(cls, video_id: str, title: str, file_path: str) -> "VideoState":
+    def create(
+        cls,
+        video_id: str,
+        title: str,
+        file_path: str,
+        duration: Optional[float] = None,
+    ) -> "VideoState":
         return cls(
             video_id=video_id,
             title=title,
             file_path=file_path,
+            duration=duration,
             downloaded_at=datetime.now(timezone.utc).isoformat(),
         )
 

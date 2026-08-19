@@ -29,6 +29,8 @@ except ImportError:
 logger = logging.getLogger(__name__)
 console = Console(markup=True)
 
+_MAX_RETRIES = 3
+
 
 _YOUTUBE_HOSTS = {"youtube.com", "youtu.be", "youtube-nocookie.com"}
 
@@ -60,32 +62,42 @@ def _sandbox_path(path: Path, base_dir: Path) -> Path:
     return resolved
 
 
-def _embed_author_metadata(file_path: Path, author: str) -> None:
-    """Embed author metadata into the video file using ffmpeg."""
-    if not author or not file_path.exists():
+def _embed_author_metadata(
+    file_path: Path, author: str, title: str = "", duration: Optional[float] = None
+) -> None:
+    """Embed author, title, and duration metadata into the video file using ffmpeg."""
+    if not file_path.exists():
+        return
+    if not author and not title and duration is None:
         return
     temp_path = file_path.with_suffix(".tmp" + file_path.suffix)
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(file_path),
+        "-c",
+        "copy",
+    ]
+    if author:
+        cmd.extend(["-metadata", f"artist={author}"])
+        cmd.extend(["-metadata", f"author={author}"])
+    if title:
+        cmd.extend(["-metadata", f"title={title}"])
+    if duration is not None:
+        # duration in seconds as string for ffmpeg metadata
+        cmd.extend(["-metadata", f"duration={duration}"])
+    cmd.append(str(temp_path))
     try:
-        subprocess.run(
-            [
-                "ffmpeg",
-                "-y",
-                "-i",
-                str(file_path),
-                "-c",
-                "copy",
-                "-metadata",
-                f"artist={author}",
-                "-metadata",
-                f"author={author}",
-                str(temp_path),
-            ],
-            check=True,
-            capture_output=True,
-        )
+        subprocess.run(cmd, check=True, capture_output=True)
         temp_path.replace(file_path)
-    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
-        logger.warning(f"Failed to embed metadata into {file_path}")
+    except subprocess.CalledProcessError as exc:
+        stderr = exc.stderr.decode("utf-8", errors="replace") if exc.stderr else ""
+        logger.warning(f"Failed to embed metadata into {file_path}: {stderr}")
+        if temp_path.exists():
+            temp_path.unlink()
+    except (FileNotFoundError, OSError) as exc:
+        logger.warning(f"Failed to embed metadata into {file_path}: {exc}")
         if temp_path.exists():
             temp_path.unlink()
 
@@ -99,16 +111,33 @@ def _sanitize_filename(title: str) -> str:
 
 
 def get_quality_format(quality: str) -> str:
+    # Prefer m3u8 (HLS) streams to avoid YouTube's DASH 403 blocks.
+    # Format: best HLS at quality / best DASH separate / best combined fallback
     quality_map = {
-        "best": "bestvideo+bestaudio/best",
-        "2160p": "bestvideo[height<=2160]+bestaudio/best[height<=2160]",
-        "1440p": "bestvideo[height<=1440]+bestaudio/best[height<=1440]",
-        "1080p": "bestvideo[height<=1080]+bestaudio/best[height<=1080]",
-        "720p": "bestvideo[height<=720]+bestaudio/best[height<=720]",
-        "480p": "bestvideo[height<=480]+bestaudio/best[height<=480]",
-        "360p": "bestvideo[height<=360]+bestaudio/best[height<=360]",
+        "best": "best[protocol=m3u8_native]/bestvideo+bestaudio/best",
+        "2160p": "best[protocol=m3u8_native][height<=2160]/bestvideo[height<=2160]+bestaudio/best[height<=2160]",
+        "1440p": "best[protocol=m3u8_native][height<=1440]/bestvideo[height<=1440]+bestaudio/best[height<=1440]",
+        "1080p": "best[protocol=m3u8_native][height<=1080]/bestvideo[height<=1080]+bestaudio/best[height<=1080]",
+        "720p": "best[protocol=m3u8_native][height<=720]/bestvideo[height<=720]+bestaudio/best[height<=720]",
+        "480p": "best[protocol=m3u8_native][height<=480]/bestvideo[height<=480]+bestaudio/best[height<=480]",
+        "360p": "best[protocol=m3u8_native][height<=360]/bestvideo[height<=360]+bestaudio/best[height<=360]",
     }
     return quality_map.get(quality, quality_map["1080p"])
+
+
+def _finish_progress_failed(
+    progress: Optional[Progress], task_id: Optional[str], label: str
+) -> None:
+    """Mark a progress task as failed: red X, bar at 0%."""
+    if progress is None or task_id is None:
+        return
+    progress.update(
+        task_id,
+        description=f"[red]✗[/red] {label}",
+        completed=0,
+        total=1,
+        refresh=False,
+    )
 
 
 def download_video(
@@ -120,6 +149,7 @@ def download_video(
     task_id: Optional[str] = None,
     uploader: str = "",
     title: str = "",
+    duration: Optional[float] = None,
 ) -> dict:
     _require_ytdlp()
     short_label = f"{uploader} - {title}" if uploader else title or video_id
@@ -131,11 +161,13 @@ def download_video(
             total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
             downloaded = d.get("downloaded_bytes", 0)
             speed = d.get("speed")
-            progress.update(task_id, completed=downloaded, total=total)
+            progress.update(task_id, completed=downloaded, total=total, refresh=False)
             if speed:
-                progress.update(task_id, speed=speed)
+                progress.update(task_id, speed=speed, refresh=False)
         elif d["status"] == "finished":
-            progress.update(task_id, description=f"[white]✓[/white] {short_label}")
+            progress.update(task_id, description=f"[white]✓[/white] {short_label}", refresh=False)
+        elif d["status"] == "error":
+            _finish_progress_failed(progress, task_id, short_label)
 
     ydl_opts = {
         "format": get_quality_format(quality),
@@ -144,7 +176,19 @@ def download_video(
         "quiet": True,
         "no_warnings": True,
         "extract_flat": False,
+        "retries": _MAX_RETRIES,
         "progress_hooks": [yt_progress_hook],
+        "postprocessors": [
+            {"key": "FFmpegMetadata", "add_metadata": True},
+        ],
+        "http_headers": {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/125.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
+        },
     }
 
     try:
@@ -152,13 +196,14 @@ def download_video(
             info = ydl.extract_info(url, download=True)
             title = info.get("title", video_id)
             ext = info.get("ext", "mp4")
+            if duration is None:
+                duration = info.get("duration")
             downloaded_path = output_dir / f"{video_id}.{ext}"
             safe_name = _sanitize_filename(title)
             final_path = output_dir / f"{safe_name}.{ext}"
             _sandbox_path(final_path, output_dir)
 
             if downloaded_path.exists():
-                # Avoid overwriting distinct videos that sanitize to the same name.
                 counter = 1
                 original_final_path = final_path
                 while final_path.exists():
@@ -169,17 +214,23 @@ def download_video(
                 downloaded_path.rename(final_path)
 
             _embed_author_metadata(
-                final_path, uploader or info.get("uploader", "") or info.get("channel", "")
+                final_path,
+                uploader or info.get("uploader", "") or info.get("channel", ""),
+                title,
+                duration,
             )
 
             video_state = VideoState.create(
                 video_id=video_id,
                 title=title,
                 file_path=str(final_path),
+                duration=duration,
             )
 
             if progress is not None and task_id is not None:
-                progress.update(task_id, description=f"[white]✓[/white] {short_label}")
+                progress.update(
+                    task_id, description=f"[white]✓[/white] {short_label}", refresh=False
+                )
 
             return {
                 "video_id": video_id,
@@ -188,20 +239,9 @@ def download_video(
                 "file_path": str(final_path),
                 "video_state": video_state,
             }
-    except yt_dlp.utils.DownloadError as e:
+    except (yt_dlp.utils.DownloadError, OSError, ValueError) as e:
         logger.error(f"Failed to download {video_id}: {e}")
-        if progress is not None and task_id is not None:
-            progress.update(task_id, description=f"[red]✗[/red] {short_label}")
-        return {
-            "video_id": video_id,
-            "title": title or "",
-            "status": "failed",
-            "error": str(e),
-        }
-    except (OSError, ValueError) as e:
-        logger.error(f"Failed to finalize {video_id}: {e}")
-        if progress is not None and task_id is not None:
-            progress.update(task_id, description=f"[red]✗[/red] {short_label}")
+        _finish_progress_failed(progress, task_id, short_label)
         return {
             "video_id": video_id,
             "title": title or "",
@@ -217,6 +257,14 @@ def get_playlist_videos(playlist_url: str) -> list[dict]:
         "quiet": True,
         "no_warnings": True,
         "extract_flat": True,
+        "http_headers": {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/125.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
+        },
     }
 
     try:
@@ -229,6 +277,7 @@ def get_playlist_videos(playlist_url: str) -> list[dict]:
                     "url": f"https://www.youtube.com/watch?v={entry.get('id')}",
                     "title": entry.get("title", ""),
                     "uploader": entry.get("uploader", "") or entry.get("channel", ""),
+                    "duration": entry.get("duration"),
                 }
                 for entry in entries
                 if entry and entry.get("id")
@@ -288,6 +337,7 @@ def download_playlist(
                 task_id=task_id,
                 uploader=video.get("uploader", ""),
                 title=video.get("title", ""),
+                duration=video.get("duration"),
             )
 
         with ThreadPoolExecutor(max_workers=config.parallel) as executor:
